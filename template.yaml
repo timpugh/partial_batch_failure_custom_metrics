@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Partial Batch Failure Custom Metrics
+
+Resources:
+  LambdaToSqs:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: "LambdaToSqs"
+      Description: "A Lambda function that publishes message to a SQS queue"
+      Timeout: 30
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      CodeUri: src/lambda-sqs/
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt MySqsQueue.QueueName
+      Environment:
+        Variables:
+          SqsQueueUrl: !Ref MySqsQueue
+
+  MySqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: "SqsToLambdaMainQueue"
+      RedrivePolicy: 
+        deadLetterTargetArn: 
+          Fn::GetAtt: 
+            - "MyDeadLetterQueue"
+            - "Arn"
+        maxReceiveCount: 2
+
+  MyDeadLetterQueue: 
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: "SqsToLambdaDlq"
+
+  SqsToLambda:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      FunctionName: "SqsToLambda"
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      CodeUri: src/sqs-lambda/
+      Description: An Amazon SQS queue that triggers our Lambda function.
+      Policies:
+        - CloudWatchPutMetricPolicy: {}
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Enabled: true
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+            Queue: !GetAtt MySqsQueue.Arn
+            BatchSize: 10
